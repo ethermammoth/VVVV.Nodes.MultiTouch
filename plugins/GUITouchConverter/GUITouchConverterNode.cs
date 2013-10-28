@@ -1,5 +1,6 @@
 #region usings
 using System;
+using System.Diagnostics;
 using System.Collections.Generic;
 using System.ComponentModel.Composition;
 
@@ -18,7 +19,7 @@ namespace VVVV.Nodes
 	public class TouchPoint
 	{
 		public int status;
-		public double startTime;		
+		public int startTime;		
 		public Vector2D firstPosition;
 		public Vector2D currentPosition;
 	}
@@ -38,8 +39,8 @@ namespace VVVV.Nodes
 		[Input("Movement Threshold", DefaultValue = 0.4, IsSingle=true)]
 		public ISpread<Vector2D> FMovementThreshold;
 		
-		[Input("Time Threshold", DefaultValue = 0.8, IsSingle=true)]
-		public ISpread<double> FTimeThreshold;
+		[Input("Time Threshold", DefaultValue = 100, IsSingle=true)]
+		public ISpread<int> FTimeThreshold;
 		
 		[Input("Enable Movement Threshold", IsSingle=true)]
 		public ISpread<bool> FMoveEnabled;
@@ -62,8 +63,8 @@ namespace VVVV.Nodes
 		
 		private Dictionary<int, TouchPoint> candidateList = new Dictionary<int, TouchPoint>();
 		private List<int> removeList = new List<int>();
-		private HiPerfTimer ftimer = new HiPerfTimer();
 		private bool running = false;
+		private Stopwatch ftimer = new Stopwatch();
 
 		//called when data for any output pin is requested
 		public void Evaluate(int SpreadMax)
@@ -72,8 +73,10 @@ namespace VVVV.Nodes
 			{
 				if(!running)
 				{
+					ftimer.Reset();
 					ftimer.Start();
 					running = true;
+					candidateList.Clear();
 				}
 			}else{
 				if(running)
@@ -99,9 +102,9 @@ namespace VVVV.Nodes
 								candidateList[FTouchId[x]].status = 0;
 							}
 							
-							if(FTimeEnabled[0])
+							if(running)
 							{
-								if(ftimer.Duration - candidateList[FTouchId[x]].startTime > FTimeThreshold[0])
+								if((int)ftimer.ElapsedMilliseconds - candidateList[FTouchId[x]].startTime > FTimeThreshold[0])
 								{
 									candidateList[FTouchId[x]].status = 0;
 								}
@@ -113,8 +116,10 @@ namespace VVVV.Nodes
 						tp.firstPosition = FTouchPosition[x];
 						tp.currentPosition = FTouchPosition[x];
 						tp.status = 1;
-						if(FTimeEnabled[0])
-							tp.startTime = ftimer.Duration;
+						if(running)
+						{
+							tp.startTime = (int)ftimer.ElapsedMilliseconds;
+						}
 						
 						candidateList.Add(FTouchId[x], tp);
 					}
