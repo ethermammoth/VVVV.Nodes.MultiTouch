@@ -52,19 +52,18 @@ namespace VVVV.Nodes
 			FOver.SliceCount = FTransforms.SliceCount;
 			FClicked.SliceCount = FTransforms.SliceCount;
 			
+			if(dirty)
+			{
+				for(int y=0; y<FTransforms.SliceCount; y++)
+				{
+					FOver[y] = false;
+					FClicked[y] = false;
+				}
+				dirty = false;
+			}
+			
 			if(FEnabled[0])
 			{
-				if(dirty)
-				{
-					for(int y=0; y<FTransforms.SliceCount; y++)
-					{
-						FOver[y] = false;
-						FClicked[y] = false;
-					}
-					dirty = false;
-				}
-				
-				
 				for(int y=0; y<FTransforms.SliceCount; y++)
 				{
 					for(int x=0; x<FTouchPosition.SliceCount; x++)
