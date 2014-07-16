@@ -19,7 +19,8 @@ namespace VVVV.Nodes
         Name = "iOS Touch Translate Scale Rotate",
         Category = "GUI",
         Help = "Handling drag, scaling and rotation",
-        Tags = ""
+        Tags = "multitouch",
+        Author = "ethermamoth"
     )]
     #endregion PluginInfo
     public class GUITouchTranslateRotateScaleNode : IPluginEvaluate
@@ -27,6 +28,9 @@ namespace VVVV.Nodes
         #region fields & pins
         [Input("Transform")]
         public ISpread<SlimDX.Matrix> FTransforms;
+
+        [Input("Index / ID")]
+        public ISpread<int> FInputIndex;
 
         [Input("Touch Position")]
         public ISpread<SlimDX.Vector2> FTouchPosition;
@@ -46,14 +50,29 @@ namespace VVVV.Nodes
         [Input("Init / Reset", IsSingle = true)]
         public ISpread<bool> FReset;
 
+        [Input("Use manual add / remove", IsSingle = true)]
+        public ISpread<bool> FUseManual;
+
+        [Input("Add", IsSingle = true)]
+        public ISpread<bool> FAddTransform;
+
+        [Input("Remove", IsSingle = true)]
+        public ISpread<bool> FRemoveTransform;
+
+        [Input("Delete index")]
+        public ISpread<int> FDeleteIndex;
+
         [Input("Enabled", IsSingle = true)]
         public ISpread<bool> FEnabled;
 
         [Output("Transform Out")]
         public ISpread<SlimDX.Matrix> FTransformsOut;
 
-        [Output("Over")]
-        public ISpread<bool> FOver;
+        [Output("Index")]
+        public ISpread<int> FIndexOut;
+
+        [Output("Translating")]
+        public ISpread<bool> FTranslating;
 
         [Import()]
         public ILogger FLogger;
@@ -72,18 +91,63 @@ namespace VVVV.Nodes
                 touchFingers.Clear();
             }
 
-            //init or update objects
-            if (touchObjects.Count != FTransforms.SliceCount)
+            if (FUseManual[0])
             {
-                for (int x = 0; x < FTransforms.SliceCount; x++)
+                if (FAddTransform[0] && FTransforms.SliceCount > 0 && FInputIndex.SliceCount > 0)
                 {
-                    //when the transform is not on the list add it
-                    if (!touchObjects.Any(objects => objects.sliceIndex == x))
+                    //add to end
+                    int pos = touchObjects.Count;
+                    touchObjects.Add(new TouchObject(FInputIndex[0], FTransforms[0]));
+                }
+                
+                if (FRemoveTransform[0])
+                {
+                    for (int x = 0; x < FDeleteIndex.SliceCount; x++)
                     {
-                        touchObjects.Add(new TouchObject(x, FTransforms[x]));
+                        if (FDeleteIndex[x] < touchObjects.Count)
+                        {
+                            try
+                            {
+                                touchObjects.RemoveAt(FDeleteIndex[x]);
+                            }
+                            catch (System.ArgumentOutOfRangeException)
+                            {
+                                FLogger.Log(LogType.Error, "Multitouch error: remove index out of range");
+                            }
+                        }
                     }
                 }
-                //TODO CHECK FOR removed transforms
+            }
+
+            //init or update objects
+            if (touchObjects.Count != FTransforms.SliceCount && !FUseManual[0])
+            {
+                if (touchObjects.Count < FTransforms.SliceCount)
+                {
+                    int dif = FTransforms.SliceCount - touchObjects.Count;
+                    for (int x = 0; x < dif; x++)
+                    {
+                        touchObjects.Add(new TouchObject(FInputIndex[FInputIndex.SliceCount - x], FTransforms[FTransforms.SliceCount - x]));
+                    }
+                }
+                else
+                {
+                    //check which transform to remove
+                    for (int i = touchObjects.Count - 1; i >= 0; i--)
+                    {
+                        int count = 0;
+                        for (int x = 0; x < FTransforms.SliceCount; x++)
+                        {
+                            if (FTransforms[x] == touchObjects[i].initialTransform)
+                            {
+                                count++;
+                            }
+                        }
+
+                        if(count > 1 || count == 0)
+                            touchObjects.RemoveAt(i);
+                    }
+                }
             }
 
             //Only update / check when enabled
@@ -140,13 +204,17 @@ namespace VVVV.Nodes
 
                 //update objects
                 FTransformsOut.SliceCount = touchObjects.Count;
-                FOver.SliceCount = touchObjects.Count;
+                FIndexOut.SliceCount = touchObjects.Count;
+                FTranslating.SliceCount = touchObjects.Count;
 
+                int index = 0;
                 foreach (TouchObject tobj in touchObjects)
                 {
                     int transformType = tobj.Update(touchFingers, FScaleLimit[0]);
-                    FTransformsOut[tobj.sliceIndex] = tobj.objectTransform;
-                    FOver[tobj.sliceIndex] = transformType > 0;
+                    FTransformsOut[index] = tobj.objectTransform;
+                    FIndexOut[index] = tobj.sliceIndex;
+                    FTranslating[index] = transformType == 1;
+                    index++;
                 }
             }
         }
@@ -195,6 +263,7 @@ public class TouchObject
     public int sliceIndex;
     public List<TouchFinger> hitIds;
     public SlimDX.Matrix objectTransform;
+    public SlimDX.Matrix initialTransform;
 
     public TouchObject()
     {
@@ -205,6 +274,7 @@ public class TouchObject
     public TouchObject(int index, SlimDX.Matrix trans)
     {
         sliceIndex = index;
+        initialTransform = trans;
         objectTransform = trans;
         hitIds = new List<TouchFinger>();
     }
@@ -285,18 +355,15 @@ public class TouchObject
             //Final matrices
             SlimDX.Matrix scale = SlimDX.Matrix.Scaling(fscale, fscale, 1);
             SlimDX.Matrix rot = SlimDX.Matrix.RotationZ((float)da);
-            //Order matters
-            objectTransform = scale * rot * objectTransform;
+            SlimDX.Vector3 srcPos = new SlimDX.Vector3(objectTransform.M41, objectTransform.M42, 0);
+            //Translate to origin
+            objectTransform.M41 = 0;
+            objectTransform.M42 = 0;
+            //rotate scale and translate back to srcpos
+            objectTransform = objectTransform * rot * scale * SlimDX.Matrix.Translation(srcPos);
             return 2;
         }
 
         return 0;
-    }
-
-    public static double Frac(double value) { return value - Math.Truncate(value); }
-    public static double SubtractCycles(double first, double second)
-    {
-        var value = first - second - 0.5;
-        return (value - Math.Floor(value)) - 0.5;
     }
 }
